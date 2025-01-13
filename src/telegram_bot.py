@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor
 import joblib
 import numpy as np
 import pandas as pd
-
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -30,18 +29,15 @@ from telegram.ext import (
 # -----------------------------------------------------
 
 logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
-# TOKEN DEL BOT (tómalo de variable de entorno o reemplázalo directamente)
-TOKEN = "7402710972:AAF6o-l5mHLdrCmrtbtyL0-ZerYzxKuBQ6g"
-# Si prefieres "quemar" el token (NO recomendado para producción):
-# TOKEN = "TU_TOKEN_AQUI"
-
+# Se recomienda manejar el token vía variable de entorno.
+TOKEN = os.getenv("TELEGRAM_TOKEN", "7402710972:AAF6o-l5mHLdrCmrtbtyL0-ZerYzxKuBQ6g")
 if not TOKEN:
-    logger.error("El token de Telegram (TELEGRAM_TOKEN) no está configurado en las variables de entorno.")
+    logger.error("El token de Telegram (TELEGRAM_TOKEN) no está configurado.")
     sys.exit(1)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -62,7 +58,7 @@ executor = ThreadPoolExecutor(max_workers=5)
 
 def obtener_modelos():
     """
-    Retorna una lista con los nombres de los archivos .pkl
+    Retorna una lista con los nombres base (sin extensión) de archivos .pkl
     en la carpeta MODELS_DIR, ordenados alfabéticamente.
     """
     modelos = []
@@ -72,10 +68,9 @@ def obtener_modelos():
                 if file.endswith(".pkl"):
                     modelos.append(os.path.splitext(file)[0])
         modelos.sort()
-        return modelos
     except FileNotFoundError:
         logger.error(f"No se encontró el directorio de modelos: {MODELS_DIR}")
-        return []
+    return modelos
 
 def obtener_csv():
     """
@@ -91,13 +86,13 @@ def obtener_csv():
                 match = re.match(r"2024(.+)\.csv", archivo)
                 nombre = match.group(1) if match else archivo.replace(".csv", "")
                 csv_dict[nombre] = os.path.join(CSV_DIR, archivo)
-        return dict(sorted(csv_dict.items()))
+        csv_dict = dict(sorted(csv_dict.items()))
     except FileNotFoundError:
         logger.error(f"No se encontró el directorio de CSVs: {CSV_DIR}")
-        return {}
+    return csv_dict
 
 # -----------------------------------------------------
-#    FUNCIÓN DE NORMALIZACIÓN DE PREDICCIÓN
+#   FUNCIÓN DE NORMALIZACIÓN DE PREDICCIÓN
 # -----------------------------------------------------
 
 def normalizar_prediccion(pred):
@@ -110,9 +105,38 @@ def normalizar_prediccion(pred):
         return "Local"
     elif "visitante" in pred_lower:
         return "Visitante"
-    else:
-        # Asumimos que lo demás es 'Empate'
-        return "Empate"
+    return "Empate"
+
+# -----------------------------------------------------
+#   FUNCIÓN AUXILIAR: CARGAR CSV + FILTRAR JORNADA
+# -----------------------------------------------------
+
+def cargar_y_filtrar_csv(csv_path: str, jornada: int) -> pd.DataFrame or str:
+    """
+    Lee el CSV, normaliza columnas, filtra la jornada solicitada
+    y retorna el DataFrame filtrado. Si hay error, retorna string de error.
+    """
+    # Verificar existencia de archivo
+    if not os.path.exists(csv_path):
+        return f"❌ **Error**: No se encontró el archivo CSV: {csv_path}"
+
+    # Leer CSV
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        return f"❌ **Error** al leer CSV '{csv_path}': {e}"
+
+    # Normalizar nombres de columnas
+    df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
+    if "fecha" not in df.columns:
+        return "❌ **Error**: No existe la columna 'fecha' en el CSV."
+
+    # Convertir 'fecha' a 'jornada_numero'
+    df["jornada_numero"] = pd.to_numeric(df["fecha"], errors="coerce").astype("Int64")
+    df_jornada = df[df["jornada_numero"] == jornada].copy()
+    if df_jornada.empty:
+        return f"❌ **Error**: No se encontraron datos para la jornada {jornada}."
+    return df_jornada
 
 # -----------------------------------------------------
 #   PREDICCIÓN DE TOP 4 POR JORNADA
@@ -120,11 +144,12 @@ def normalizar_prediccion(pred):
 
 def predecir_top4(modelo: str, csv_path: str, jornada: int) -> str:
     """
-    1. Carga el modelo y clases.
+    1. Carga el modelo y sus clases.
     2. Filtra la jornada completa del CSV.
-    3. Predice TODOS los partidos, pero construye un Top 4 (ordenado por confianza).
-    4. Devuelve un string con esos 4 partidos y su predicción (NO compara con goles).
+    3. Predice TODOS los partidos, construye un Top 4 (ordenado por confianza).
+    4. Devuelve un string con esos 4 partidos y su predicción.
     """
+    # Paths de modelo y clases
     model_folder = os.path.join(MODELS_DIR, modelo)
     model_path = os.path.join(model_folder, f"{modelo}.pkl")
     classes_path = os.path.join(model_folder, "classes.npy")
@@ -134,56 +159,116 @@ def predecir_top4(modelo: str, csv_path: str, jornada: int) -> str:
         return f"❌ **Error**: No se encontró el archivo del modelo: {model_path}"
     if not os.path.exists(classes_path):
         return f"❌ **Error**: No se encontró el archivo de clases: {classes_path}"
-    if not os.path.exists(csv_path):
-        return f"❌ **Error**: No se encontró el CSV: {csv_path}"
 
+    # Cargar CSV y filtrar
+    df_jornada = cargar_y_filtrar_csv(csv_path, jornada)
+    if isinstance(df_jornada, str):  # si hay error, df_jornada será un string
+        return df_jornada
+
+    # Cargar modelo y clases
     try:
         pipeline = joblib.load(model_path)
         clases = np.load(classes_path, allow_pickle=True)
     except Exception as e:
         return f"❌ **Error** al cargar modelo/clases: {e}"
 
-    # Cargar CSV
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception as e:
-        return f"❌ **Error** al leer CSV '{csv_path}': {e}"
-
-    df.columns = df.columns.str.strip().str.lower()
-    if 'fecha' not in df.columns:
-        return "❌ **Error**: No existe la columna 'fecha' en el CSV."
-
-    df['jornada_numero'] = pd.to_numeric(df['fecha'], errors='coerce').astype('Int64')
-    df_jornada = df[df['jornada_numero'] == jornada].copy()
-    if df_jornada.empty:
-        return f"❌ **Error**: No se encontraron datos para la jornada {jornada}."
-
-    # Lista de features (ajústala según tu modelo)
+    # Lista de features (ajusta con tus columnas reales)
     features = [
-        'puntos_acumulados_local', 'puntos_acumulados_visitante',
-        'wins_last10_local', 'draws_last10_local', 'losses_last10_local',
-        'wins_last10_visitante', 'draws_last10_visitante', 'losses_last10_visitante',
-        'goles_favor_last10_local', 'goles_contra_last10_local',
-        'goles_favor_last10_visitante', 'goles_contra_last10_visitante',
-        'goles_equipo_local', 'goles_equipo_visitante',
-        'head2head_local_wins', 'head2head_local_draws', 'head2head_local_losses',
-        'head2head_visitante_wins', 'head2head_visitante_draws', 'head2head_visitante_losses',
-        'puntos_balance', 'goles_balance',
-        'posicion_tabla_local', 'posicion_tabla_visitante',
-        'dias_descanso_local', 'dias_descanso_visitante',
-        'elo_rating_local', 'elo_rating_visitante',
-        'valor_mercado_local', 'valor_mercado_visitante',
-        'jugadores_lesionados_local', 'jugadores_lesionados_visitante',
-        'titulares_sancionados_local', 'titulares_sancionados_visitante',
-        'diff_posicion_tabla', 'diff_elo_rating', 'diff_dias_descanso'
+        # Local
+        "puntos_acumulados_local",
+        "wins_last10_local",
+        "draws_last10_local",
+        "losses_last10_local",
+        "goles_favor_last10_local",
+        "goles_contra_last10_local",
+        "current_win_streak_local",
+        "current_loss_streak_local",
+        "puntos_ultimos5_local",
+        "goles_favor_ultimos5_local",
+        "goles_contra_ultimos5_local",
+        "prom_goles_favor_ultimos5_local",
+        "prom_goles_contra_ultimos5_local",
+        "clean_sheets_last10_local",
+        "btts_last10_local",
+        "over25_last10_local",
+        "clean_sheets_last5_local",
+        "btts_last5_local",
+        "over25_last5_local",
+        "home_win_rate_local",
+        "away_win_rate_local",
+
+        # Visitante
+        "puntos_acumulados_visitante",
+        "wins_last10_visitante",
+        "draws_last10_visitante",
+        "losses_last10_visitante",
+        "goles_favor_last10_visitante",
+        "goles_contra_last10_visitante",
+        "current_win_streak_visitante",
+        "current_loss_streak_visitante",
+        "puntos_ultimos5_visitante",
+        "goles_favor_ultimos5_visitante",
+        "goles_contra_ultimos5_visitante",
+        "prom_goles_favor_ultimos5_visitante",
+        "prom_goles_contra_ultimos5_visitante",
+        "clean_sheets_last10_visitante",
+        "btts_last10_visitante",
+        "over25_last10_visitante",
+        "clean_sheets_last5_visitante",
+        "btts_last5_visitante",
+        "over25_last5_visitante",
+        "home_win_rate_visitante",
+        "away_win_rate_visitante",
+
+        # Head2head
+        "head2head_local_wins",
+        "head2head_local_draws",
+        "head2head_local_losses",
+        "head2head_visitante_wins",
+        "head2head_visitante_draws",
+        "head2head_visitante_losses",
+
+        # Balances
+        "puntos_balance",
+        "goles_balance",
+
+        # Posiciones
+        "posicion_tabla_local",
+        "posicion_tabla_visitante",
+        "diff_posicion_tabla",
+
+        # Días de descanso
+        "dias_descanso_local",
+        "dias_descanso_visitante",
+        "diff_dias_descanso",
+
+        # ELO
+        "elo_rating_local",
+        "elo_rating_visitante",
+        "diff_elo_rating",
+
+        # Otros
+        "valor_mercado_local",
+        "valor_mercado_visitante",
+        "jugadores_lesionados_local",
+        "jugadores_lesionados_visitante",
+        "titulares_sancionados_local",
+        "titulares_sancionados_visitante"
     ]
+
+    # Agregar columnas faltantes con 0
     missing = set(features) - set(df_jornada.columns)
     if missing:
-        return f"❌ **Error**: Faltan columnas en el CSV: {missing}"
+        for col in missing:
+            df_jornada[col] = 0
+        logger.warning(f"Se agregaron columnas faltantes con 0: {', '.join(missing)}")
 
+    # Crear sub-DataFrame de features y convertir a numérico
     df_features = df_jornada[features].copy()
+    for col in df_features.columns:
+        df_features[col] = pd.to_numeric(df_features[col], errors="coerce").fillna(0)
 
-    # Predicción
+    # Predicciones
     try:
         probas = pipeline.predict_proba(df_features)
     except Exception as e:
@@ -193,26 +278,33 @@ def predecir_top4(modelo: str, csv_path: str, jornada: int) -> str:
     pred_labels = clases[pred_indices]
     confianzas = np.max(probas, axis=1)
 
-    # Construimos un DataFrame para filtrar top4
-    df_jornada_info = df_jornada[[
-        'id_partido', 'fecha',
-        'nombre_equipo_local', 'nombre_equipo_visitante'
-    ]].copy()
+    # Construir DataFrame con info de partidos
+    info_partido_cols = [
+        "id_partido",
+        "nombre_equipo_local",
+        "nombre_equipo_visitante",
+        "goles_equipo_local",
+        "goles_equipo_visitante"
+    ]
+    for col in info_partido_cols:
+        if col not in df_jornada.columns:
+            return f"❌ **Error**: No se encontró la columna '{col}' en el CSV."
 
-    df_jornada_info['Predicción'] = pred_labels
-    df_jornada_info['Confianza'] = confianzas
+    df_jornada_info = df_jornada[info_partido_cols].copy()
+    df_jornada_info["Predicción"] = pred_labels
+    df_jornada_info["Confianza"] = confianzas
 
-    # Ordenamos por confianza y tomamos top 4
-    df_top4 = df_jornada_info.sort_values('Confianza', ascending=False).head(4)
+    # Ordenar por confianza y tomar top 4
+    df_top4 = df_jornada_info.sort_values("Confianza", ascending=False).head(4)
 
-    # Construimos texto
+    # Construcción de texto de salida
     resultado = [f"**TOP 4 de la Jornada {jornada} - Modelo `{modelo}`**\n"]
     for _, row in df_top4.iterrows():
-        pid = row['id_partido']
-        local = row['nombre_equipo_local']
-        visitante = row['nombre_equipo_visitante']
-        pred = row['Predicción']
-        conf = row['Confianza']
+        pid = row["id_partido"]
+        local = row["nombre_equipo_local"]
+        visitante = row["nombre_equipo_visitante"]
+        pred = row["Predicción"]
+        conf = row["Confianza"]
         txt = (
             f"Partido ID {pid}\n"
             f"_{local}_ vs _{visitante}_\n"
@@ -228,231 +320,246 @@ def predecir_top4(modelo: str, csv_path: str, jornada: int) -> str:
 
 def comparar_top4(modelo: str, csv_path: str, jornada: int) -> str:
     """
-    1. Carga el modelo y clases.
+    1. Carga el modelo y sus clases.
     2. Filtra la jornada completa del CSV.
     3. Predice TODOS los partidos, toma el Top 4 por confianza.
-    4. Normaliza la predicción (si dice "Local Gana" -> "Local").
-    5. EXCLUYE EMPATES de la estadística: no los cuenta ni como acierto ni como fallo.
-    6. Devuelve un string con el reporte de aciertos.
+    4. Normaliza la predicción (Local/Visitante/Empate).
+    5. EXCLUYE EMPATES en la estadística (ni acierto ni fallo).
+    6. Devuelve un string con el reporte de aciertos y fallos del Top 4.
     """
     model_folder = os.path.join(MODELS_DIR, modelo)
     model_path = os.path.join(model_folder, f"{modelo}.pkl")
     classes_path = os.path.join(model_folder, "classes.npy")
 
+    # Verificar existencia de archivos
     if not os.path.exists(model_path):
         return f"❌ **Error**: No se encontró el archivo del modelo: {model_path}"
     if not os.path.exists(classes_path):
         return f"❌ **Error**: No se encontró el archivo de clases: {classes_path}"
-    if not os.path.exists(csv_path):
-        return f"❌ **Error**: No se encontró el CSV: {csv_path}"
 
+    # Cargar y filtrar CSV
+    df_jornada = cargar_y_filtrar_csv(csv_path, jornada)
+    if isinstance(df_jornada, str):
+        return df_jornada  # si hay error, df_jornada es un string con el mensaje
+
+    # Cargar modelo y clases
     try:
         pipeline = joblib.load(model_path)
         clases = np.load(classes_path, allow_pickle=True)
     except Exception as e:
         return f"❌ **Error** al cargar modelo/clases: {e}"
 
-    # Leer CSV y filtrar jornada
-    try:
-        df = pd.read_csv(csv_path)
-    except Exception as e:
-        return f"❌ **Error** al leer CSV '{csv_path}': {e}"
-
-    df.columns = df.columns.str.strip().str.lower()
-    if 'fecha' not in df.columns:
-        return "❌ **Error**: No existe la columna 'fecha' en el CSV."
-
-    df['jornada_numero'] = pd.to_numeric(df['fecha'], errors='coerce').astype('Int64')
-    df_jornada = df[df['jornada_numero'] == jornada].copy()
-    if df_jornada.empty:
-        return f"❌ **Error**: No se encontraron datos para la jornada {jornada}."
-
-    # Mismas features
+    # Lista de features (ajusta con tus columnas reales)
     features = [
-        'puntos_acumulados_local', 'puntos_acumulados_visitante',
-        'wins_last10_local', 'draws_last10_local', 'losses_last10_local',
-        'wins_last10_visitante', 'draws_last10_visitante', 'losses_last10_visitante',
-        'goles_favor_last10_local', 'goles_contra_last10_local',
-        'goles_favor_last10_visitante', 'goles_contra_last10_visitante',
-        'goles_equipo_local', 'goles_equipo_visitante',
-        'head2head_local_wins', 'head2head_local_draws', 'head2head_local_losses',
-        'head2head_visitante_wins', 'head2head_visitante_draws', 'head2head_visitante_losses',
-        'puntos_balance', 'goles_balance',
-        'posicion_tabla_local', 'posicion_tabla_visitante',
-        'dias_descanso_local', 'dias_descanso_visitante',
-        'elo_rating_local', 'elo_rating_visitante',
-        'valor_mercado_local', 'valor_mercado_visitante',
-        'jugadores_lesionados_local', 'jugadores_lesionados_visitante',
-        'titulares_sancionados_local', 'titulares_sancionados_visitante',
-        'diff_posicion_tabla', 'diff_elo_rating', 'diff_dias_descanso'
+        # Local
+        "puntos_acumulados_local",
+        "wins_last10_local",
+        "draws_last10_local",
+        "losses_last10_local",
+        "goles_favor_last10_local",
+        "goles_contra_last10_local",
+        "current_win_streak_local",
+        "current_loss_streak_local",
+        "puntos_ultimos5_local",
+        "goles_favor_ultimos5_local",
+        "goles_contra_ultimos5_local",
+        "prom_goles_favor_ultimos5_local",
+        "prom_goles_contra_ultimos5_local",
+        "clean_sheets_last10_local",
+        "btts_last10_local",
+        "over25_last10_local",
+        "clean_sheets_last5_local",
+        "btts_last5_local",
+        "over25_last5_local",
+        "home_win_rate_local",
+        "away_win_rate_local",
+
+        # Visitante
+        "puntos_acumulados_visitante",
+        "wins_last10_visitante",
+        "draws_last10_visitante",
+        "losses_last10_visitante",
+        "goles_favor_last10_visitante",
+        "goles_contra_last10_visitante",
+        "current_win_streak_visitante",
+        "current_loss_streak_visitante",
+        "puntos_ultimos5_visitante",
+        "goles_favor_ultimos5_visitante",
+        "goles_contra_ultimos5_visitante",
+        "prom_goles_favor_ultimos5_visitante",
+        "prom_goles_contra_ultimos5_visitante",
+        "clean_sheets_last10_visitante",
+        "btts_last10_visitante",
+        "over25_last10_visitante",
+        "clean_sheets_last5_visitante",
+        "btts_last5_visitante",
+        "over25_last5_visitante",
+        "home_win_rate_visitante",
+        "away_win_rate_visitante",
+
+        # Head2head
+        "head2head_local_wins",
+        "head2head_local_draws",
+        "head2head_local_losses",
+        "head2head_visitante_wins",
+        "head2head_visitante_draws",
+        "head2head_visitante_losses",
+
+        # Balances
+        "puntos_balance",
+        "goles_balance",
+
+        # Posiciones
+        "posicion_tabla_local",
+        "posicion_tabla_visitante",
+        "diff_posicion_tabla",
+
+        # Días de descanso
+        "dias_descanso_local",
+        "dias_descanso_visitante",
+        "diff_dias_descanso",
+
+        # ELO
+        "elo_rating_local",
+        "elo_rating_visitante",
+        "diff_elo_rating",
+
+        # Otros
+        "valor_mercado_local",
+        "valor_mercado_visitante",
+        "jugadores_lesionados_local",
+        "jugadores_lesionados_visitante",
+        "titulares_sancionados_local",
+        "titulares_sancionados_visitante"
     ]
+
+    # Agregar columnas faltantes con 0
     missing = set(features) - set(df_jornada.columns)
     if missing:
-        return f"❌ **Error**: Faltan columnas en el CSV: {missing}"
+        for col in missing:
+            df_jornada[col] = 0
+        logger.warning(f"Se agregaron columnas faltantes con 0: {', '.join(missing)}")
 
+    # Sub-DataFrame y conversión a numérico
     df_features = df_jornada[features].copy()
+    for col in df_features.columns:
+        df_features[col] = pd.to_numeric(df_features[col], errors="coerce").fillna(0)
 
     # Predicción
     try:
         probas = pipeline.predict_proba(df_features)
-        pred_indices = np.argmax(probas, axis=1)
-        pred_labels = clases[pred_indices]
-        confianzas = np.max(probas, axis=1)
     except Exception as e:
         return f"❌ **Error** al predecir: {e}"
 
-    df_jornada_info = df_jornada[[
-        'id_partido',
-        'nombre_equipo_local',
-        'nombre_equipo_visitante',
-        'goles_equipo_local',
-        'goles_equipo_visitante'
-    ]].copy()
+    pred_indices = np.argmax(probas, axis=1)
+    pred_labels = clases[pred_indices]
+    confianzas = np.max(probas, axis=1)
 
-    df_jornada_info['PredicciónOriginal'] = pred_labels
-    df_jornada_info['Confianza'] = confianzas
+    # Construir DataFrame con info de partidos
+    info_partido_cols = [
+        "id_partido",
+        "nombre_equipo_local",
+        "nombre_equipo_visitante",
+        "goles_equipo_local",
+        "goles_equipo_visitante"
+    ]
+    for col in info_partido_cols:
+        if col not in df_jornada.columns:
+            return f"❌ **Error**: No se encontró la columna '{col}' en el CSV."
 
-    # Ordenar por confianza y tomar top4
-    df_jornada_info = df_jornada_info.sort_values('Confianza', ascending=False).head(4)
+    df_jornada_info = df_jornada[info_partido_cols].copy()
+    df_jornada_info["Predicción"] = pred_labels
+    df_jornada_info["Confianza"] = confianzas
 
-    # Normalizar la predicción
-    df_jornada_info['PrediccionNorm'] = df_jornada_info['PredicciónOriginal'].apply(normalizar_prediccion)
+    # Ordenar por confianza y tomar top 4
+    df_top4 = df_jornada_info.sort_values("Confianza", ascending=False).head(4)
 
-    # Obtener resultado real
-    def obtener_resultado_real(row):
-        gl = row['goles_equipo_local']
-        gv = row['goles_equipo_visitante']
-        if gl > gv:
-            return "Local"
-        elif gl < gv:
-            return "Visitante"
+    # --- Lógica de comparación ---
+    aciertos = 0
+    fallos = 0
+    partidos_ignorados = 0
+    detalles = []
+
+    for _, row in df_top4.iterrows():
+        pid = row["id_partido"]
+        local = row["nombre_equipo_local"]
+        visitante = row["nombre_equipo_visitante"]
+        goles_local = row["goles_equipo_local"]
+        goles_visitante = row["goles_equipo_visitante"]
+        pred_raw = row["Predicción"]
+        conf = row["Confianza"]
+
+        # Normalizar (Local, Visitante, Empate)
+        pred_norm = normalizar_prediccion(pred_raw)
+
+        # Resultado real
+        if goles_local > goles_visitante:
+            real = "Local"
+        elif goles_local < goles_visitante:
+            real = "Visitante"
         else:
-            return "Empate"
+            real = "Empate"
 
-    df_jornada_info['ResultadoReal'] = df_jornada_info.apply(obtener_resultado_real, axis=1)
-
-    # Comparar normalizada vs real
-    df_jornada_info['Acierto'] = df_jornada_info['PrediccionNorm'] == df_jornada_info['ResultadoReal']
-
-    # -- IGNORAR EMPATES EN ESTADÍSTICAS --
-    df_empates = df_jornada_info[df_jornada_info['ResultadoReal'] == 'Empate'].copy()
-    df_no_empates = df_jornada_info[df_jornada_info['ResultadoReal'] != 'Empate'].copy()
-
-    total_sin_empates = len(df_no_empates)
-    aciertos_sin_empates = df_no_empates['Acierto'].sum()
-    numero_empates = len(df_empates)
-
-    if total_sin_empates > 0:
-        efectividad = 100.0 * aciertos_sin_empates / total_sin_empates
-    else:
-        efectividad = 0.0
-
-    # Construir reporte
-    reporte = []
-    reporte.append(f"**Comparación (Top 4) - Jornada {jornada} - Modelo `{modelo}`**")
-    reporte.append(f"- Total Top 4: {len(df_jornada_info)}")
-    reporte.append(f"- Partidos ignorados (Empate): {numero_empates}")
-    reporte.append(f"- Partidos tomados en cuenta (sin Empate): {total_sin_empates}")
-    reporte.append(f"- Aciertos (sin empates): {aciertos_sin_empates}")
-    reporte.append(f"- Efectividad (sin empates): {efectividad:.2f}%\n")
-
-    # Mostrar detalles de los no empate
-    for _, row in df_no_empates.iterrows():
-        pid = row['id_partido']
-        local = row['nombre_equipo_local']
-        visitante = row['nombre_equipo_visitante']
-        pred_orig = row['PredicciónOriginal']
-        pred_norm = row['PrediccionNorm']
-        real = row['ResultadoReal']
-        conf = row['Confianza']
-        icon = "✔️" if row['Acierto'] else "❌"
-
-        txt = (
-            f"Partido {pid}: {local} vs {visitante}\n"
-            f"   - Predicción Original: `{pred_orig}` (conf: {conf:.2f})\n"
-            f"   - Normalizada: `{pred_norm}`\n"
-            f"   - Real: `{real}`\n"
-            f"   - Acierto: {icon}\n"
+        # Construcción de texto
+        linea = (
+            f"Partido ID {pid}\n"
+            f"_{local}_ vs _{visitante}_\n"
+            f"   - Predicción: **{pred_norm}** (conf: {conf:.2f})\n"
+            f"   - Resultado real: **{real}**\n"
         )
-        reporte.append(txt)
 
-    # (Opcional) mostrar los empates ignorados
-    if not df_empates.empty:
-        reporte.append("\n**Partidos ignorados (Empate):**\n")
-        for _, row in df_empates.iterrows():
-            pid = row['id_partido']
-            local = row['nombre_equipo_local']
-            visitante = row['nombre_equipo_visitante']
-            pred_orig = row['PredicciónOriginal']
-            pred_norm = row['PrediccionNorm']
-            real = row['ResultadoReal']
-            conf = row['Confianza']
-            txt = (
-                f"Partido {pid}: {local} vs {visitante}\n"
-                f"   - Predicción Original: `{pred_orig}` (conf: {conf:.2f})\n"
-                f"   - Normalizada: `{pred_norm}`\n"
-                f"   - Real: `{real}` (Ignorado por Empate)\n"
-            )
-            reporte.append(txt)
+        # Ignoramos empates en la estadística
+        if real == "Empate":
+            linea += "   - [IGNORADO] (el resultado real fue Empate)\n"
+            partidos_ignorados += 1
+        elif pred_norm == "Empate":
+            linea += "   - [IGNORADO] (la predicción es Empate)\n"
+            partidos_ignorados += 1
+        else:
+            # Comparar
+            if pred_norm == real:
+                linea += "   - **ACIERTO**\n"
+                aciertos += 1
+            else:
+                linea += "   - **FALLO**\n"
+                fallos += 1
 
-    return "\n".join(reporte)
+        detalles.append(linea)
+
+    # Resumen
+    total_tomados = len(df_top4) - partidos_ignorados
+    texto_resumen = (
+        f"**TOP 4 de la Jornada {jornada} - Modelo `{modelo}`**\n\n"
+        + "\n".join(detalles)
+        + "\n"
+        + f"Aciertos (sin empates): {aciertos}\n"
+        + f"Fallos (sin empates): {fallos}\n"
+        + f"Partidos tomados en cuenta (sin Empate): {total_tomados}\n"
+    )
+
+    return texto_resumen
 
 # -----------------------------------------------------
-#   COMPROBAR TODAS LAS JORNADAS
+#   COMPROBAR TODAS LAS JORNADAS (opcional)
 # -----------------------------------------------------
 
 def comprobar_toda_la_liga(modelo: str, csv_path: str, jornadas=38) -> str:
     """
     1. Para cada jornada (1..jornadas), llama a 'comparar_top4'.
-    2. Acumula cuántos partidos (sin empates) y cuántos aciertos hubo.
-    3. Retorna un reporte global y, opcionalmente, un resumen de cada jornada.
+    2. Acumula resultados en un reporte global.
     """
-    total_partidos_sin_empate_global = 0
-    total_aciertos_global = 0
     detalles_por_jornada = []
-
     for j in range(1, jornadas + 1):
         reporte_jornada = comparar_top4(modelo, csv_path, j)
         if "❌ **Error**" in reporte_jornada:
-            # Marcamos error en esa jornada y seguimos
             detalles_por_jornada.append(f"Jornada {j} => Error:\n{reporte_jornada}")
             continue
-        
-        # Parseamos con regex los totales
-        match_total = re.search(r"Partidos tomados en cuenta \(sin Empate\): (\d+)", reporte_jornada)
-        match_aciertos = re.search(r"Aciertos \(sin empates\): (\d+)", reporte_jornada)
+        detalles_por_jornada.append(f"**Jornada {j}**\n{reporte_jornada}\n")
 
-        if match_total and match_aciertos:
-            total_j = int(match_total.group(1))
-            aciertos_j = int(match_aciertos.group(1))
-
-            total_partidos_sin_empate_global += total_j
-            total_aciertos_global += aciertos_j
-
-            detalles_por_jornada.append(
-                f"Jornada {j}: {aciertos_j} / {total_j}"
-            )
-        else:
-            detalles_por_jornada.append(
-                f"Jornada {j}: No se pudo extraer aciertos:\n{reporte_jornada}"
-            )
-
-    # Efectividad global
-    if total_partidos_sin_empate_global > 0:
-        efectividad_global = 100.0 * total_aciertos_global / total_partidos_sin_empate_global
-    else:
-        efectividad_global = 0.0
-
-    resultado_final = []
-    resultado_final.append(f"**Comprobación de TODA la liga (1..{jornadas})**")
-    resultado_final.append(f"- Total de partidos (sin empates): {total_partidos_sin_empate_global}")
-    resultado_final.append(f"- Aciertos globales: {total_aciertos_global}")
-    resultado_final.append(f"- Efectividad global: {efectividad_global:.2f}%\n")
-
-    resultado_final.append("**Resumen por Jornada:**")
-    for d in detalles_por_jornada:
-        resultado_final.append(f"- {d}")
-
+    resultado_final = [
+        f"**Comprobación de TODA la liga (1..{jornadas})**\n",
+        *detalles_por_jornada
+    ]
     return "\n".join(resultado_final)
 
 # -----------------------------------------------------
@@ -468,22 +575,22 @@ async def send_and_track_message(
 ):
     """
     Envía un mensaje y registra su ID en el contexto del usuario
-    para poder eliminarlo después si se desea.
+    para poder eliminarlo posteriormente.
     """
     message = await update.effective_message.reply_text(
         text=text,
         reply_markup=reply_markup,
         parse_mode=parse_mode
     )
-    context.user_data.setdefault('messages', []).append(message.message_id)
+    context.user_data.setdefault("messages", []).append(message.message_id)
     return message
 
 async def limpiar_mensajes_anteriores(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Elimina todos los mensajes registrados en context.user_data['messages'].
     """
-    if 'messages' in context.user_data:
-        for msg_id in context.user_data['messages']:
+    if "messages" in context.user_data:
+        for msg_id in context.user_data["messages"]:
             try:
                 await context.bot.delete_message(
                     chat_id=update.effective_chat.id,
@@ -491,7 +598,7 @@ async def limpiar_mensajes_anteriores(update: Update, context: ContextTypes.DEFA
                 )
             except Exception as e:
                 logger.warning(f"No se pudo eliminar el mensaje {msg_id}: {e}")
-        context.user_data['messages'].clear()
+        context.user_data["messages"].clear()
 
 # -----------------------------------------------------
 #           HANDLERS DE COMANDOS
@@ -501,12 +608,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Handler del comando /start:
       1) Limpia mensajes anteriores
-      2) Muestra lista de modelos
+      2) Muestra lista de modelos disponibles
     """
     await limpiar_mensajes_anteriores(update, context)
 
     modelos = obtener_modelos()
-    context.user_data['csv_files'] = obtener_csv()
+    context.user_data["csv_files"] = obtener_csv()
 
     if not modelos:
         await send_and_track_message(update, context, "❌ **Error:** No se encontraron modelos disponibles.")
@@ -551,13 +658,17 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------------------------------------
 
 async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Callback para cuando el usuario selecciona un modelo.
+    Se guarda el modelo y se muestra la lista de CSV disponibles.
+    """
     query = update.callback_query
     await query.answer()
 
     modelo = query.data.split("_", 1)[1]
-    context.user_data['modelo'] = modelo
+    context.user_data["modelo"] = modelo
 
-    csv_files = context.user_data.get('csv_files', {})
+    csv_files = context.user_data.get("csv_files", {})
     if not csv_files:
         await query.edit_message_text("❌ **Error:** No se encontraron archivos CSV disponibles.")
         return
@@ -576,50 +687,51 @@ async def seleccionar_modelo(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def seleccionar_csv(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Tras elegir el CSV (liga), preguntamos por la jornada específica
-    o la nueva opción: "Comprobar TODA la liga".
+    Tras elegir el CSV (liga), ofrecemos elegir una jornada específica
+    o "Comprobar toda la liga".
     """
     query = update.callback_query
     await query.answer()
 
     csv_nombre = query.data.split("_", 1)[1]
-    csv_files = context.user_data.get('csv_files', {})
+    csv_files = context.user_data.get("csv_files", {})
 
     if csv_nombre not in csv_files:
         await query.edit_message_text("❌ **Error:** Archivo CSV no encontrado.")
         return
 
-    context.user_data['csv'] = csv_files[csv_nombre]
+    context.user_data["csv"] = csv_files[csv_nombre]
 
-    # Armamos las opciones: jornadas + una nueva para "toda la liga"
+    # Armamos las opciones: Jornadas + opción de comprobar toda la liga
     keyboard = [
         [InlineKeyboardButton(f"🔢 Jornada {j}", callback_data=f"jornada_{j}")]
         for j in JORNADAS
     ]
-    # Nuevo botón para comprobar toda la liga
     keyboard.append([InlineKeyboardButton("📋 Comprobar TODA la liga", callback_data="comprobar_toda_liga")])
     keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="cancelar")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await query.edit_message_text(
-        text=f"✅ **Archivo CSV seleccionado:** {csv_nombre}\n"
-             f"📅 **Selecciona una jornada o comprueba toda la liga:**",
+        text=(
+            f"✅ **Archivo CSV seleccionado:** {csv_nombre}\n"
+            f"📅 **Selecciona una jornada o comprueba toda la liga:**"
+        ),
         reply_markup=reply_markup
     )
 
 async def seleccionar_jornada(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Cuando el usuario elige la jornada, predecimos los 4 partidos con mayor probabilidad
-    y mostramos el resultado con opciones para comparar, predecir de nuevo o finalizar.
+    Cuando el usuario elige la jornada, predecimos los 4 partidos
+    con mayor probabilidad y mostramos el resultado con opciones.
     """
     query = update.callback_query
     await query.answer()
 
     jornada = int(query.data.split("_", 1)[1])
-    context.user_data['jornada'] = jornada
+    context.user_data["jornada"] = jornada
 
-    modelo = context.user_data.get('modelo')
-    csv_path = context.user_data.get('csv')
+    modelo = context.user_data.get("modelo")
+    csv_path = context.user_data.get("csv")
 
     if not modelo or not csv_path:
         await query.edit_message_text(
@@ -633,10 +745,9 @@ async def seleccionar_jornada(update: Update, context: ContextTypes.DEFAULT_TYPE
     def run_top4():
         return predecir_top4(modelo, csv_path, jornada)
 
+    # Ejecutar predecir_top4 en un thread para no bloquear
     prediccion_text = await loop.run_in_executor(executor, run_top4)
-
-    # Guardamos el texto de la predicción en user_data para "Volver atrás" en caso de comparación
-    context.user_data['prediccion_text'] = prediccion_text
+    context.user_data["prediccion_text"] = prediccion_text
 
     keyboard = [
         [InlineKeyboardButton("✅ Comparar con resultado real (Top4)", callback_data="comprobar_resultado")],
@@ -645,7 +756,6 @@ async def seleccionar_jornada(update: Update, context: ContextTypes.DEFAULT_TYPE
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Enviamos el Top4 al usuario
     await send_and_track_message(
         update,
         context,
@@ -657,16 +767,14 @@ async def seleccionar_jornada(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def comprobar_resultado_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Cuando el usuario pulsa "Comparar con resultado real (Top4)",
-    se compara sólo el Top 4 de partidos y se muestra el reporte de aciertos.
-    Empates se ignoran (ni acierto ni fallo).
-    Incluimos un botón "Volver atrás" para regresar al texto de la predicción.
+    comparamos sólo el Top 4 de partidos con la lógica de aciertos y empates ignorados.
     """
     query = update.callback_query
     await query.answer()
 
-    modelo = context.user_data.get('modelo')
-    csv_path = context.user_data.get('csv')
-    jornada = context.user_data.get('jornada')
+    modelo = context.user_data.get("modelo")
+    csv_path = context.user_data.get("csv")
+    jornada = context.user_data.get("jornada")
 
     if not modelo or not csv_path or not jornada:
         await query.edit_message_text("❌ **Error**: Faltan datos para comparar.")
@@ -679,9 +787,8 @@ async def comprobar_resultado_callback(update: Update, context: ContextTypes.DEF
         return comparar_top4(modelo, csv_path, jornada)
 
     comparison_text = await loop.run_in_executor(executor, run_compare)
-    context.user_data['comparison_text'] = comparison_text  # por si se usa en otro lado
+    context.user_data["comparison_text"] = comparison_text
 
-    # Construimos teclado con botón "Volver atrás"
     keyboard = [
         [InlineKeyboardButton("⬅️ Volver atrás", callback_data="volver_prediccion")],
         [InlineKeyboardButton("🔄 Predecir de nuevo", callback_data="predecir_de_nuevo")],
@@ -697,18 +804,17 @@ async def comprobar_resultado_callback(update: Update, context: ContextTypes.DEF
 
 async def volver_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Cuando el usuario pulsa "Volver atrás" después de comparar,
-    volvemos a mostrar la predicción original Top 4 y su teclado.
+    Cuando el usuario pulsa "Volver atrás" tras comparar,
+    volvemos a mostrar la predicción original con su teclado.
     """
     query = update.callback_query
     await query.answer()
 
-    prediccion_text = context.user_data.get('prediccion_text')
+    prediccion_text = context.user_data.get("prediccion_text")
     if not prediccion_text:
         await query.edit_message_text("❌ **No hay predicción previa almacenada.**")
         return
 
-    # Reconstruimos el teclado post-predicción
     keyboard = [
         [InlineKeyboardButton("✅ Comparar con resultado real (Top4)", callback_data="comprobar_resultado")],
         [InlineKeyboardButton("🔄 Predecir de nuevo", callback_data="predecir_de_nuevo")],
@@ -722,21 +828,17 @@ async def volver_prediccion(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
-# NUEVO CALLBACK: COMPROBAR TODA LA LIGA
 async def comprobar_toda_liga_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Cuando el usuario pulsa "Comprobar TODA la liga":
-      1) Itera jornadas 1..38 (o las que definas).
-      2) Llama comparar_top4 para cada jornada.
-      3) Acumula aciertos y totales.
-      4) Devuelve un reporte global.
+    Itera jornadas 1..38 (o personalizadas) y muestra reporte.
     """
     query = update.callback_query
     await query.answer()
 
-    modelo = context.user_data.get('modelo')
-    csv_path = context.user_data.get('csv')
-    max_jornadas = 38  # O detecta automáticamente cuántas jornadas hay.
+    modelo = context.user_data.get("modelo")
+    csv_path = context.user_data.get("csv")
+    max_jornadas = 38  # Ajustar según corresponda
 
     if not modelo or not csv_path:
         await query.edit_message_text("❌ **Error**: Faltan datos para comparar toda la liga.")
@@ -762,15 +864,9 @@ async def comprobar_toda_liga_callback(update: Update, context: ContextTypes.DEF
         parse_mode=ParseMode.MARKDOWN
     )
 
-async def manejar_cancelacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    El usuario cancela el proceso.
-    """
-    query = update.callback_query
-    await query.answer()
-
-    await query.edit_message_text("❌ **Proceso cancelado.**")
-    context.user_data.clear()
+# -----------------------------------------------------
+#           HANDLERS DE CALLBACKS (CONTINUACIÓN)
+# -----------------------------------------------------
 
 async def predecir_de_nuevo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -783,7 +879,7 @@ async def predecir_de_nuevo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def finalizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Mensaje de despedida y limpia el contexto.
+    Mensaje de despedida y se limpia el contexto.
     """
     query = update.callback_query
     await query.answer()
@@ -791,11 +887,25 @@ async def finalizar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text("✅ **Gracias por usar el bot. ¡Hasta luego!**")
     context.user_data.clear()
 
+async def manejar_cancelacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    El usuario cancela el proceso.
+    """
+    query = update.callback_query
+    await query.answer()
+
+    await query.edit_message_text("❌ **Proceso cancelado.**")
+    context.user_data.clear()
+
 # -----------------------------------------------------
 #       MANEJADOR GLOBAL DE ERRORES
 # -----------------------------------------------------
+
 async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logger.error(msg="Exception while handling an update:", exc_info=context.error)
+    """
+    Captura excepciones globales y notifica al usuario si es posible.
+    """
+    logger.error("Exception while handling an update:", exc_info=context.error)
     if isinstance(update, Update) and update.effective_message:
         try:
             await update.effective_message.reply_text(
@@ -807,6 +917,7 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 # -----------------------------------------------------
 #              FUNCIÓN PRINCIPAL
 # -----------------------------------------------------
+
 def main():
     """
     Punto de entrada del script: configura el bot y arranca el polling.
@@ -829,7 +940,7 @@ def main():
     application.add_handler(CallbackQueryHandler(comprobar_resultado_callback, pattern="^comprobar_resultado$"))
     application.add_handler(CallbackQueryHandler(volver_prediccion, pattern="^volver_prediccion$"))
 
-    # NUEVO handler para comprobar toda la liga
+    # Handler para comprobar toda la liga
     application.add_handler(CallbackQueryHandler(comprobar_toda_liga_callback, pattern="^comprobar_toda_liga$"))
 
     # Manejador global de errores
