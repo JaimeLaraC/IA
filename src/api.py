@@ -11,7 +11,7 @@ API_KEY = "0fd247b049e29f77d89dce2eea2d08f1"
 BASE_URL = "https://v3.football.api-sports.io"
 
 # ID de la liga y temporada a consultar
-LEAGUE_ID = 39  # Liga de ejemplo
+LEAGUE_ID = 135  # Liga de ejemplo
 SEASONS = ["2024"]  # Temporadas a consultar
 
 # Cabeceras de la solicitud
@@ -25,7 +25,7 @@ if not os.path.exists(OUTPUT_DIR):
     os.makedirs(OUTPUT_DIR)  # Crea la carpeta si no existe
 
 # Nombre y ruta completa del archivo de salida
-FILE_NAME = os.path.join(OUTPUT_DIR, "Premier.json")
+FILE_NAME = os.path.join(OUTPUT_DIR, "2024SerieA.json")
 
 # Control de solicitudes
 REQUEST_LIMIT = 300
