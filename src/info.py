@@ -334,7 +334,17 @@ def fetch_and_save_json(league_id):
 
     try:
         for SEASON in SEASONS:
-            url = f"{BASE_URL}/fixtures?league={league_id}&season={SEASON}"
+            hoy_str = datetime.now().strftime("%Y-%m-%d")
+            fecha_inicio = "2024-01-01"  # Desde enero de 2024
+            fecha_fin = hoy_str         # Hasta hoy
+
+            url = (
+                f"{BASE_URL}/fixtures?"
+                f"league={league_id}&"
+                f"season={SEASON}&"
+                f"from={fecha_inicio}&"
+                f"to={fecha_fin}"
+            )
             response = requests.get(url, headers=headers)
             REQUEST_COUNT += 1
             check_request_limit()
@@ -359,6 +369,13 @@ def fetch_and_save_json(league_id):
                     fixture_info = match.get("fixture", {})
                     teams_info = match.get("teams", {})
                     goals_info = match.get("goals", {})
+
+                    fixture_date_str = fixture_info.get("date", "")
+                    fixture_datetime = parse_fixture_date(fixture_date_str)  # Devuelve un datetime
+
+                    if fixture_datetime.date() > datetime.now().date():
+                        # Este partido es del futuro (mañana o después), lo omitimos
+                        continue
 
                     fixture_date_str = fixture_info.get("date", "")
                     fixture_datetime = parse_fixture_date(fixture_date_str)
