@@ -10,7 +10,6 @@ API_KEY = "0fd247b049e29f77d89dce2eea2d08f1"
 # Endpoint base
 BASE_URL = "https://v3.football.api-sports.io"
 
-# ID de la liga y temporada a consultar
 LEAGUE_ID = 40  # Liga de ejemplo
 SEASONS = ["2020", "2019", "2018", "2017", "2016", "2015"]  # Temporadas a consultar
 
