@@ -125,7 +125,7 @@ def main():
     parser = argparse.ArgumentParser(description="Combina archivos JSON de resultados por temporada.")
     parser.add_argument(
         "--folder_path",
-        default="/home/jaime-lara/Escritorio/Repositorios/IA",
+        default="/home/jaimelara/Escritorio/Repositorios/IA",
         help="Ruta a la carpeta principal que contiene 'outputs'. Por defecto: /home/jaime-lara/Escritorio/Repositorios/IA"
     )
     parser.add_argument(
