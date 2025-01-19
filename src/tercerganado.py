@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+#
+# tercerganado.py (versión refactorizada sin inputs por consola)
 
 import os
 import sys
@@ -7,45 +9,39 @@ import pandas as pd
 import numpy as np
 import joblib
 
-def main():
+def predecir_jornada(model_name, csv_file, jornada_num):
+    """
+    Carga el modelo `model_name` desde la carpeta 'models/',
+    lee el CSV `csv_file` desde la carpeta 'data/',
+    filtra los registros de la jornada `jornada_num`
+    y retorna un DataFrame con las columnas:
+      [id_partido, fecha, nombre_equipo_local, nombre_equipo_visitante, Predicción, Confianza]
+
+    También imprime en pantalla el TOP 4 partidos con mayor confianza.
+    """
     # =============================
-    # 1. Listar modelos disponibles y elegir uno
+    # 1. Rutas y validaciones
     # =============================
     modelos_dir = "models"
-    print("=== PREDICCIÓN DE RESULTADOS PARA TODAS LAS JORNADAS ===\n")
-    
-    # Listamos las carpetas dentro de "models" (cada carpeta representa un modelo)
-    model_folders = [d for d in os.listdir(modelos_dir) 
-                     if os.path.isdir(os.path.join(modelos_dir, d))]
-    if not model_folders:
-        print(f"No se encontraron modelos en la carpeta '{modelos_dir}'. Abortando.")
-        sys.exit(1)
-
-    print("Modelos disponibles:")
-    for i, folder in enumerate(model_folders, start=1):
-        print(f"{i}. {folder}")
-
-    # Pedimos elegir una carpeta/modelo
-    try:
-        model_idx = int(input("\nElija el número del modelo que desea usar: ").strip())
-        if model_idx < 1 or model_idx > len(model_folders):
-            raise ValueError
-    except ValueError:
-        print("No se eligió un número de modelo válido. Abortando.")
-        sys.exit(1)
-
-    model_name = model_folders[model_idx - 1]
     model_path = os.path.join(modelos_dir, model_name, f"{model_name}.pkl")
     classes_path = os.path.join(modelos_dir, model_name, "classes.npy")
 
-    if not os.path.exists(model_path) or not os.path.exists(classes_path):
-        print("Error: modelo o clases no encontrados.")
-        sys.exit(1)
+    if not os.path.exists(model_path):
+        raise FileNotFoundError(f"No se encontró el modelo en: {model_path}")
+    if not os.path.exists(classes_path):
+        raise FileNotFoundError(f"No se encontró el archivo de clases: {classes_path}")
 
-    # Cargamos el modelo y las clases
+    data_dir = "data"
+    jornada_csv = os.path.join(data_dir, csv_file)
+    if not os.path.exists(jornada_csv):
+        raise FileNotFoundError(f"No se encontró el archivo CSV: {jornada_csv}")
+
+    # =============================
+    # 2. Cargar el modelo y las clases
+    # =============================
     try:
         pipeline = joblib.load(model_path)
-        print(f"\nModelo cargado exitosamente desde: {model_path}")
+        print(f"Modelo cargado exitosamente desde: {model_path}")
     except Exception as e:
         print(f"Error al cargar el modelo '{model_path}': {e}")
         sys.exit(1)
@@ -58,115 +54,37 @@ def main():
         sys.exit(1)
 
     # =============================
-    # 2. Listar CSVs disponibles en la carpeta data y elegir uno
+    # 3. Cargar y preparar el DataFrame
     # =============================
-    data_dir = "data"
-    if not os.path.exists(data_dir):
-        print(f"La carpeta '{data_dir}' no existe. Abortando.")
-        sys.exit(1)
+    df = pd.read_csv(jornada_csv)
+    print(f"Datos cargados desde '{jornada_csv}'. Filas: {len(df)}")
 
-    csv_files = [f for f in os.listdir(data_dir) if f.endswith(".csv")]
-    if not csv_files:
-        print(f"No se encontraron archivos CSV en la carpeta '{data_dir}'. Abortando.")
-        sys.exit(1)
-
-    print("Archivos CSV disponibles:")
-    for i, f in enumerate(csv_files, start=1):
-        print(f"{i}. {f}")
-
-    try:
-        csv_idx = int(input("\nElija el número del archivo CSV de la jornada: ").strip())
-        if csv_idx < 1 or csv_idx > len(csv_files):
-            raise ValueError
-    except ValueError:
-        print("No se eligió un número de archivo CSV válido. Abortando.")
-        sys.exit(1)
-
-    jornada_csv = os.path.join(data_dir, csv_files[csv_idx - 1])
-    if not os.path.exists(jornada_csv):
-        print(f"Error: El archivo '{jornada_csv}' no existe.")
-        sys.exit(1)
-
-    # Cargamos los datos
-    try:
-        df = pd.read_csv(jornada_csv)
-        print(f"\nDatos cargados exitosamente desde '{jornada_csv}'. Filas: {len(df)}")
-        print("Columnas en el CSV:", df.columns.tolist())  # Añadido para diagnóstico
-    except Exception as e:
-        print(f"Error al leer '{jornada_csv}': {e}")
-        sys.exit(1)
-
-    # Normalizar nombres de columnas: eliminar espacios y convertir a minúsculas (opcional)
+    # Normalizar nombres de columnas (opcional)
     df.columns = df.columns.str.strip().str.lower()
-    print("Columnas normalizadas:", df.columns.tolist())
 
-    # =============================
-    # 3. Verificar y Utilizar 'fecha' como número de jornada
-    # =============================
+    # Convertir 'fecha' a numérico para obtener la jornada
     if 'fecha' not in df.columns:
-        print("No existe la columna 'fecha' en el CSV para filtrar jornada. Abortando.")
-        sys.exit(1)
-
-    # Convertimos la columna 'fecha' a tipo numérico (int), manejando posibles errores
-    try:
-        df['jornada_numero'] = pd.to_numeric(df['fecha'], errors='coerce').astype('Int64')
-    except Exception as e:
-        print(f"Error al convertir 'fecha' a numérico para 'jornada_numero': {e}")
-        sys.exit(1)
-
+        raise KeyError("No existe la columna 'fecha' en el CSV para filtrar jornada.")
+    df['jornada_numero'] = pd.to_numeric(df['fecha'], errors='coerce').astype('Int64')
     if df['jornada_numero'].isna().any():
-        print("Existen valores no numéricos en 'fecha' que no pudieron convertirse a 'jornada_numero'. Abortando.")
-        sys.exit(1)
+        raise ValueError("Existen valores no numéricos en 'fecha' que impiden asignar la 'jornada_numero'.")
 
-    # =============================
-    # 4. Listar las jornadas disponibles
-    # =============================
-    jornadas_unicas = df['jornada_numero'].drop_duplicates().sort_values().reset_index(drop=True)
-    jornadas_unicas = jornadas_unicas.dropna().astype(int)  # Aseguramos que sean enteros
-    num_jornadas = len(jornadas_unicas)
-
-    if num_jornadas == 0:
-        print("No hay jornadas disponibles para predecir. Abortando.")
-        sys.exit(1)
-
-    print("\nJornadas disponibles:")
-    for idx, jornada in enumerate(jornadas_unicas, start=1):
-        print(f"{idx}. Jornada {jornada}")
-
-    try:
-        jornada_selection = int(input(f"\nIngrese el número de la jornada que desea predecir (1-{num_jornadas}): ").strip())
-        if jornada_selection < 1 or jornada_selection > num_jornadas:
-            raise ValueError
-    except ValueError:
-        print("La jornada ingresada no es un número válido o está fuera de rango. Abortando.")
-        sys.exit(1)
-
-    jornada_num = jornadas_unicas.iloc[jornada_selection - 1]
+    # Filtrar la jornada
     df_jornada = df[df['jornada_numero'] == jornada_num].copy()
     if df_jornada.empty:
-        print(f"No se encontraron datos para la jornada {jornada_num}. Abortando.")
-        sys.exit(1)
-
-    print(f"\nDatos filtrados para la jornada {jornada_num}. Filas: {len(df_jornada)}")
+        raise ValueError(f"No se encontraron registros para la jornada {jornada_num} en '{csv_file}'.")
 
     # =============================
-    # 5. Guardar info del partido para imprimir después
+    # 4. Revisar columnas esenciales
     # =============================
     info_partido_cols = [
         'id_partido', 'fecha', 'nombre_equipo_local', 'nombre_equipo_visitante'
     ]
-    # Verificamos que esas columnas existan
     for col in info_partido_cols:
         if col not in df_jornada.columns:
-            print(f"Error: No se encontró la columna '{col}' en el CSV. Abortando.")
-            sys.exit(1)
+            raise KeyError(f"No se encontró la columna '{col}' en el CSV. Abortando.")
 
-    df_jornada_info = df_jornada[info_partido_cols].copy()
-
-    # =============================
-    # 6. Definir la lista de features que el modelo espera
-    #    (las mismas que usaste en el training)
-    # =============================
+    # Definir features esperadas por el modelo
     features = [
         # Local
         "puntos_acumulados_local",
@@ -250,68 +168,75 @@ def main():
         "titulares_sancionados_visitante"
     ]
 
-    # Verificamos que existan en el DataFrame
     missing_cols = set(features) - set(df_jornada.columns)
     if missing_cols:
-        print(f"Error: Faltan columnas en el CSV para poder predecir: {missing_cols}")
-        sys.exit(1)
+        raise KeyError(f"Faltan columnas en el CSV para poder predecir: {missing_cols}")
 
-    # Filtramos
-    df_jornada_filtrado = df_jornada[features].copy()
+    df_features = df_jornada[features].copy()
 
-    # =============================
-    # 7. (Opcional) Rellenar goles_equipo_local/visitante con -1
-    #    SOLO si tu modelo incluye esas columnas y las consideraste. 
-    #    Si NO las usas, omite este paso.  
-    # =============================
-    # Si se usan goles en el training, ponlos a -1 para "no conocer resultado".
-    # Ejemplo (comentar/ajustar si no los necesitas):
-    # df_jornada_filtrado['goles_equipo_local'] = -1
-    # df_jornada_filtrado['goles_equipo_visitante'] = -1
-
-    # Convertir todo a numérico para evitar problemas
-    for col in df_jornada_filtrado.columns:
-        df_jornada_filtrado[col] = pd.to_numeric(df_jornada_filtrado[col], errors='coerce').fillna(0)
+    # Convertir todo a numérico y rellenar NaNs con 0, por si acaso
+    for col in df_features.columns:
+        df_features[col] = pd.to_numeric(df_features[col], errors='coerce').fillna(0)
 
     # =============================
-    # 8. Predecir con PROBABILIDADES
+    # 5. Predecir
     # =============================
     try:
-        probas = pipeline.predict_proba(df_jornada_filtrado)
-        pred_encoded = np.argmax(probas, axis=1)   # Índice de la clase con mayor prob
-        pred_labels = clases[pred_encoded]         # Nombre de la clase
+        probas = pipeline.predict_proba(df_features)
+        pred_encoded = np.argmax(probas, axis=1)  # Índice de la clase mayor prob
+        pred_labels = np.array(clases)[pred_encoded]  # Etiquetas de clase
     except Exception as e:
-        print(f"Error al predecir los partidos: {e}")
+        print(f"Error al predecir: {e}")
         sys.exit(1)
 
-    # =============================
-    # 9. Calcular la confianza
-    # =============================
+    # Calcular confianza
     confianzas = np.max(probas, axis=1)
 
-    # Adjuntamos predicciones en df_jornada_info
-    df_jornada_info['Predicción'] = pred_labels
-    df_jornada_info['Confianza'] = confianzas
+    # =============================
+    # 6. Construir DataFrame de salida
+    # =============================
+    df_resultados = df_jornada[info_partido_cols].copy()
+    df_resultados['Predicción'] = pred_labels
+    df_resultados['Confianza'] = confianzas
 
-    # =============================
-    # 10. Ordenar por confianza desc (opcional) y mostrar TOP 4
-    # =============================
-    df_top4 = df_jornada_info.sort_values('Confianza', ascending=False).head(4)
+    # Ordenar por confianza desc
+    df_resultados = df_resultados.sort_values('Confianza', ascending=False).reset_index(drop=True)
 
-    # =============================
-    # 11. Imprimir resultados
-    # =============================
+    # Imprimir TOP 4
+    df_top4 = df_resultados.head(4)
     print("\n=== TOP 4 PARTIDOS CON MAYOR PROBABILIDAD DE ACERTAR ===\n")
     for idx, row in df_top4.iterrows():
-        pid = row['id_partido']
-        fecha = row['fecha']
-        local = row['nombre_equipo_local']
-        visitante = row['nombre_equipo_visitante']
-        prediccion = row['Predicción']
-        confianza = row['Confianza']
-        print(f"Partido ID {pid} | Jornada: {fecha} | {local} vs {visitante} => {prediccion} (Confianza: {confianza:.2f})")
+        print(f"Partido ID {row['id_partido']} | Jornada: {row['fecha']} | "
+              f"{row['nombre_equipo_local']} vs {row['nombre_equipo_visitante']} => "
+              f"{row['Predicción']} (Confianza: {row['Confianza']:.2f})")
+    print("\n===================================\n")
 
-    print("\n==============================\n")
+    # Retornar todas las predicciones
+    return df_resultados
+
+
+def main():
+    """
+    Ejemplo de ejecución manual (sin interacción):
+    Para ejecutarlo directamente, editar las variables:
+      - model_name
+      - csv_file
+      - jornada_num
+    antes de correr `python tercerganado.py`.
+    """
+    model_name = "nombre_del_modelo"  # nombre de la carpeta en models/
+    csv_file = "temporada_308_2024.csv"  # ejemplo
+    jornada_num = 10  # jornada a predecir
+
+    try:
+        df_resultados = predecir_jornada(model_name, csv_file, jornada_num)
+        # Podrías guardar df_resultados a un CSV si quisieras, por ej.:
+        # df_resultados.to_csv("outputs/predicciones_jornada_10.csv", index=False)
+        print(f"\nPredicciones completas:\n{df_resultados.head()}\n")
+    except Exception as e:
+        print(f"\nOcurrió un error en 'main': {e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
