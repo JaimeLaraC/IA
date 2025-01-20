@@ -270,7 +270,7 @@ def objective(trial):
 
 print("\nIniciando la optimización de hiperparámetros con Optuna...")
 study = optuna.create_study(direction='maximize')
-study.optimize(objective, n_trials=500, timeout=3600)  # Ajusta a tu gusto
+study.optimize(objective, n_trials=1000, timeout=7200)  # Ajusta a tu gusto
 
 print("Mejores parámetros encontrados:")
 for key, value in study.best_params.items():

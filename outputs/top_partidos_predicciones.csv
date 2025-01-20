@@ -1,7 +1,7 @@
 id_partido,fecha,nombre_equipo_local,nombre_equipo_visitante,Predicción,Confianza
-1223801,21,Inter,Empoli,Local Gana,0.896876
-1208672,20,Real Madrid,Las Palmas,Local Gana,0.8810042
-1213609,19,Heerenveen,Ajax,Visitante Gana,0.8765925
-1217744,23,Castellón,Cordoba,Visitante Gana,0.8764008
-1213610,19,Sparta Rotterdam,Waalwijk,Local Gana,0.8050117
-1224134,18,Union Berlin,FSV Mainz 05,Local Gana,0.7954072
+1249941,23,Messina,Crotone,Visitante Gana,0.9202328
+1338252,15,Naft Maysan,Duhok,Visitante Gana,0.90346193
+1215015,19,Hapoel Hadera,Ironi Tiberias,Local Gana,0.78856766
+1215014,19,Hapoel Haifa,Ashdod,Local Gana,0.74846065
+1250321,23,Gubbio,Perugia,Visitante Gana,0.7248171
+1249938,23,Turris,Casertana,Local Gana,0.71613336

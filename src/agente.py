@@ -31,14 +31,12 @@ HEADERS = {"x-apisports-key": API_KEY}
 
 # LISTA ESTÁTICA DE LIGAS QUE INTERESAN (POR SU ID)
 LIGAS_SELECCIONADAS_IDS = [
-    39,    # Premier League
-    140,   # La Liga
-    135,
-    78,
-    141,
-    88,
-    79,
-    63
+    307,
+    542,
+    383,
+    942,
+    943,
+    89,
 ]
 
 # Nombre del modelo (o carpeta en "models")
