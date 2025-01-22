@@ -31,12 +31,19 @@ HEADERS = {"x-apisports-key": API_KEY}
 
 # LISTA ESTÁTICA DE LIGAS QUE INTERESAN (POR SU ID)
 LIGAS_SELECCIONADAS_IDS = [
-    307,
-    542,
-    383,
-    942,
-    943,
-    89,
+    78,
+    140,
+    141,
+    61,
+    39,
+    135,
+    88,
+    79,
+    62,
+    63,
+    40,
+    41,
+    42
 ]
 
 # Nombre del modelo (o carpeta en "models")
@@ -56,7 +63,7 @@ def obtener_partidos_dos_dias_utc():
 
     # Fecha UTC actual y la siguiente
     hoy_utc = datetime.utcnow().date()
-    manana_utc = hoy_utc + timedelta(days=1)
+    manana_utc = hoy_utc - timedelta(days=4)
 
     # Convertir a cadena "YYYY-MM-DD"
     hoy_utc_str = hoy_utc.strftime("%Y-%m-%d")
@@ -113,17 +120,18 @@ def _descargar_partidos_por_fecha_utc(fecha_utc_str):
 
 def obtener_partidos_del_dia_local():
     """
-    Obtiene partidos que, en la hora local, pertenecen al 'día actual'.
+    Obtiene los partidos que, en la hora local, corresponden a 'mañana'.
     
-    - Descarga partidos del día UTC actual y del siguiente (para cubrir el
-      desfase horario).
+    - Descarga partidos del día UTC actual y del siguiente (para cubrir
+      desfases horarios).
     - Convierte la columna 'fecha' (UTC) a tu zona horaria local.
-    - Filtra para quedarse únicamente con los que caen en la fecha local 'hoy'.
+    - Filtra para quedarse únicamente con los que caen en la fecha local de 'mañana'.
     """
-
     tz_local = pytz.timezone("America/Mexico_City")
-    # Obtenemos la fecha local de 'hoy'
+    # Obtenemos la fecha local de hoy
     hoy_local = datetime.now(tz_local).date()
+    # Calculamos 'mañana' en hora local
+    manana_local = hoy_local - timedelta(days=4)
 
     # 1. Descargar partidos de hoy y mañana en UTC
     df = obtener_partidos_dos_dias_utc()
@@ -136,10 +144,10 @@ def obtener_partidos_del_dia_local():
     # 3. Convertir a hora local
     df["fecha_local"] = df["fecha_utc"].dt.tz_convert(tz_local)
 
-    # 4. Filtrar por la parte date local == hoy_local
-    df = df[df["fecha_local"].dt.date == hoy_local]
+    # 4. Filtrar por la parte date local == manana_local
+    df = df[df["fecha_local"].dt.date == manana_local]
 
-    # 5. Actualizar la columna 'fecha' con la fecha local (solo por estética)
+    # 5. Actualizar la columna 'fecha' con la fecha local (opcional, por estética)
     df["fecha"] = df["fecha_local"]
     df.drop(columns=["fecha_utc", "fecha_local"], inplace=True)
 
@@ -166,24 +174,24 @@ def extraer_numero_jornada(round_str):
 
 
 def main():
-    # 1. Obtener los partidos "de hoy" según la hora local
-    df_partidos_hoy = obtener_partidos_del_dia_local()
-    if df_partidos_hoy.empty:
-        logging.info("No hay partidos programados (en hora local) para hoy. Finalizando agente.")
+    # 1. Obtener los partidos "de mañana" según la hora local
+    df_partidos_manana = obtener_partidos_del_dia_local()
+    if df_partidos_manana.empty:
+        logging.info("No hay partidos programados (en hora local) para mañana. Finalizando agente.")
         return
 
     # 2. Filtrar por las ligas seleccionadas
-    df_partidos_filtrados = df_partidos_hoy[df_partidos_hoy['liga_id'].isin(LIGAS_SELECCIONADAS_IDS)].copy()
+    df_partidos_filtrados = df_partidos_manana[df_partidos_manana['liga_id'].isin(LIGAS_SELECCIONADAS_IDS)].copy()
     if df_partidos_filtrados.empty:
         logging.warning(f"No hay partidos (en hora local) para ligas con IDs {LIGAS_SELECCIONADAS_IDS}. Finalizando.")
         return
 
     logging.info(
         f"Se encontraron {len(df_partidos_filtrados)} partidos para las ligas con IDs "
-        f"{LIGAS_SELECCIONADAS_IDS} que se juegan HOY (en hora local)."
+        f"{LIGAS_SELECCIONADAS_IDS} que se juegan MAÑANA (en hora local)."
     )
 
-    # 3. Extraer los IDs de liga únicos que se juegan hoy
+    # 3. Extraer los IDs de liga únicos que se juegan mañana
     ligas_ids = df_partidos_filtrados['liga_id'].unique().tolist()
 
     # 4. Para cada ID de liga, procesar datos y predecir
@@ -193,7 +201,7 @@ def main():
         logging.info(f"\n=== Procesando Liga ID: {lid} ===")
         procesar_liga(league_id=lid)
         # -------------------------------
-        # 1. Obtener SOLO los partidos HOY de esa liga
+        # 1. Obtener SOLO los partidos de MAÑANA de esa liga
         # -------------------------------
         df_partidos_liga = df_partidos_filtrados[df_partidos_filtrados['liga_id'] == lid].copy()
         if df_partidos_liga.empty:
@@ -206,25 +214,24 @@ def main():
             jornada_num = 1
 
         # -------------------------------
-        # 2. Filtrar liga.csv por esos fixture_id de HOY
+        # 2. Filtrar liga.csv por esos fixture_id de MAÑANA
         # -------------------------------
         csv_file_path = os.path.join("data", "liga.csv")  # Ajusta si tu CSV se llama distinto
 
         # Lee el CSV completo de la temporada (todas las jornadas)
         df_liga_completa = pd.read_csv(csv_file_path)
 
-        # Qué fixture_ids están en los partidos de HOY para esta liga
-        hoy_fixture_ids = df_partidos_liga["fixture_id"].unique()
+        # Qué fixture_ids están en los partidos de MAÑANA para esta liga
+        manana_fixture_ids = df_partidos_liga["fixture_id"].unique()
 
         # Filtra la DataFrame de la liga completa para quedarte sólo con esos partidos
-        df_liga_filtrada = df_liga_completa[df_liga_completa["id_partido"].isin(hoy_fixture_ids)]
+        df_liga_filtrada = df_liga_completa[df_liga_completa["id_partido"].isin(manana_fixture_ids)]
 
         if df_liga_filtrada.empty:
-            logging.warning(f"Tras filtrar, no hay partidos para el día de hoy en la liga {lid}. Saltando.")
+            logging.warning(f"Tras filtrar, no hay partidos para mañana en la liga {lid}. Saltando.")
             continue
 
-        # Puedes guardar en un CSV temporal (para no sobreescribir el original)
-        # o sobreescribir el mismo archivo. Aquí creamos uno nuevo de ejemplo:
+        # Guardamos en un CSV temporal (ejemplo: sobreescribiendo "liga.csv" o como gustes)
         liga_filtrada_csv = os.path.join("data", f"liga.csv")
         df_liga_filtrada.to_csv(liga_filtrada_csv, index=False)
 
@@ -258,16 +265,16 @@ def main():
         logging.warning("No se generaron predicciones para ninguna liga seleccionada. Finalizando.")
         return
 
-    # Obtener TOP 4 por "Confianza"
+    # Obtener TOP 6 por "Confianza" (o el número que desees)
     df_top = df_predicciones_combined.sort_values("Confianza", ascending=False).head(6)
 
     # Guardar
     os.makedirs("outputs", exist_ok=True)
     df_top.to_csv(OUTPUT_PREDICCIONES, index=False, encoding='utf-8')
-    logging.info(f"\nTOP 4 predicciones guardadas en '{OUTPUT_PREDICCIONES}'\n")
+    logging.info(f"\nTOP 6 predicciones guardadas en '{OUTPUT_PREDICCIONES}'\n")
 
     # Mostrar en consola
-    logging.info("=== TOP 4 PARTIDOS CON MAYOR PROBABILIDAD DE ACIERTO (todas las ligas) ===\n")
+    logging.info("=== TOP 6 PARTIDOS CON MAYOR PROBABILIDAD DE ACIERTO (todas las ligas) ===\n")
     for idx, row in df_top.iterrows():
         logging.info(
             f"Partido ID {row['id_partido']} | "

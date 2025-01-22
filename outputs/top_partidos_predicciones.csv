@@ -1,7 +1,7 @@
 id_partido,fecha,nombre_equipo_local,nombre_equipo_visitante,Predicción,Confianza
-1249941,23,Messina,Crotone,Visitante Gana,0.9202328
-1338252,15,Naft Maysan,Duhok,Visitante Gana,0.90346193
-1215015,19,Hapoel Hadera,Ironi Tiberias,Local Gana,0.78856766
-1215014,19,Hapoel Haifa,Ashdod,Local Gana,0.74846065
-1250321,23,Gubbio,Perugia,Visitante Gana,0.7248171
-1249938,23,Turris,Casertana,Local Gana,0.71613336
+1222335,20,Maccabi Herzliya,Hapoel Petah Tikva,Visitante Gana,0.91674155
+1224417,20,Enosis,Omonia Nicosia,Visitante Gana,0.8463981
+1222333,20,Maccabi Kabilio Jaffa,Bnei Yehuda,Visitante Gana,0.8311088
+1250329,24,Sestri Levante,Legnago Salus,Local Gana,0.8146707
+1325365,19,FC Thun,FC Vaduz,Local Gana,0.7983732
+1216187,29,Sheffield Utd,Hull City,Local Gana,0.7960712

@@ -6,7 +6,7 @@ import json
 import os
 import time
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # ================================================
 # CONFIGURACIÓN DE LA API Y PARÁMETROS GENERALES
@@ -335,8 +335,9 @@ def fetch_and_save_json(league_id):
     try:
         for SEASON in SEASONS:
             hoy_str = datetime.now().strftime("%Y-%m-%d")
+            manana_str = (datetime.now() - timedelta(days=4)).strftime("%Y-%m-%d")
             fecha_inicio = "2024-01-01"  # Desde enero de 2024
-            fecha_fin = hoy_str         # Hasta hoy
+            fecha_fin = manana_str         # Hasta hoy
 
             url = (
                 f"{BASE_URL}/fixtures?"
@@ -373,7 +374,7 @@ def fetch_and_save_json(league_id):
                     fixture_date_str = fixture_info.get("date", "")
                     fixture_datetime = parse_fixture_date(fixture_date_str)  # Devuelve un datetime
 
-                    if fixture_datetime.date() > datetime.now().date():
+                    if fixture_datetime.date() > (datetime.now() - timedelta(days=4)).date():
                         # Este partido es del futuro (mañana o después), lo omitimos
                         continue
 
