@@ -31,27 +31,16 @@ HEADERS = {"x-apisports-key": API_KEY}
 
 # LISTA ESTÁTICA DE LIGAS QUE INTERESAN (POR SU ID)
 LIGAS_SELECCIONADAS_IDS = [
-    78,
-    140,
-    141,
-    61,
-    39,
-    135,
-    88,
-    79,
-    307,
-    318,
-    62,
+    85,
+    308,
+    145,
+    233,
     40,
     41,
     42,
     43,
     542,
-    383,
-    136,
-    138,
-    942,
-    598
+    322
 ]
 
 # Nombre del modelo (o carpeta en "models")
@@ -71,7 +60,7 @@ def obtener_partidos_dos_dias_utc():
 
     # Fecha UTC actual y la siguiente
     hoy_utc = datetime.utcnow().date()
-    manana_utc = hoy_utc - timedelta(days=4)
+    manana_utc = hoy_utc + timedelta(days=1)
 
     # Convertir a cadena "YYYY-MM-DD"
     hoy_utc_str = hoy_utc.strftime("%Y-%m-%d")
@@ -139,7 +128,7 @@ def obtener_partidos_del_dia_local():
     # Obtenemos la fecha local de hoy
     hoy_local = datetime.now(tz_local).date()
     # Calculamos 'mañana' en hora local
-    manana_local = hoy_local - timedelta(days=4)
+    manana_local = hoy_local + timedelta(days=1)
 
     # 1. Descargar partidos de hoy y mañana en UTC
     df = obtener_partidos_dos_dias_utc()
@@ -153,7 +142,7 @@ def obtener_partidos_del_dia_local():
     df["fecha_local"] = df["fecha_utc"].dt.tz_convert(tz_local)
 
     # 4. Filtrar por la parte date local == manana_local
-    df = df[df["fecha_local"].dt.date == hoy_local]
+    df = df[df["fecha_local"].dt.date == manana_local]
 
     # 5. Actualizar la columna 'fecha' con la fecha local (opcional, por estética)
     df["fecha"] = df["fecha_local"]
